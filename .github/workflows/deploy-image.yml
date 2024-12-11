@@ -1,0 +1,42 @@
+name: Docker Build and Push
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 저장소를 체크아웃
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. .env 파일 생성
+      - name: Create .env
+        run: |
+          echo "MONGO_URI=${{ vars.CONTEST_MONGO_URI }}" > .env
+          echo "JWT_SECRET=${{ secrets.CONTEST_JWT_SECRET }}" >> .env
+          echo "REDIS_HOST=${{ vars.CONTEST_REDIS_HOST }}" >> .env
+          echo "REDIS_PORT=6379" >> .env
+          echo "OPENAI_API_KEY=${{ secrets.CONTEST_OPENAI_API_KEY }}" >> .env
+          echo "ENCRYPTION_KEY=${{ secrets.CONTEST_ENCRYPTION_KEY }}" >> .env
+          echo "PASSWORD_SALT=${{ secrets.CONTEST_PASSWORD_SALT }}" >> .env
+
+      # 3. Docker 로그인
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: timepresent95
+          password: ${{ secrets.CONTEST_DOCKER_PASSWORD }}
+
+      # 5. Docker 이미지 빌드 및 푸시
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: timepresent95/contest-be:latest
