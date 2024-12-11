@@ -14,4 +14,5 @@ module.exports = {
   redisPort: process.env.REDIS_PORT,
   openaiApiKey: process.env.OPENAI_API_KEY,
   vectorDbEndpoint: process.env.VECTOR_DB_ENDPOINT,
+  kafkaBrokers: process.env.KAFKA_BROKERS,
 };

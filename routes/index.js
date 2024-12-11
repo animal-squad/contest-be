@@ -2,10 +2,11 @@ const express = require("express");
 const router = express.Router();
 
 // Import route modules
-const authRoutes = require("./api/auth");
-const userRoutes = require("./api/users");
-const { router: roomsRouter } = require("./api/rooms");
-const fileRoutes = require("./api/files");
+const authRoutes = require('./api/auth');
+const userRoutes = require('./api/users');
+const { router: roomsRouter } = require('./api/rooms');
+const fileRoutes = require('./api/files');
+const aiRoutes = require('./api/ai');
 
 // API documentation route
 router.get("/", (req, res) => {
@@ -33,10 +34,11 @@ router.get("/", (req, res) => {
 });
 
 // Mount routes
-router.use("/auth", authRoutes);
-router.use("/users", userRoutes);
-router.use("/rooms", roomsRouter); // roomsRouter로 변경
-router.use("/files", fileRoutes);
+router.use('/auth', authRoutes);
+router.use('/users', userRoutes);
+router.use('/rooms', roomsRouter);  // roomsRouter로 변경
+router.use('/files', fileRoutes);
+router.use('/ai', aiRoutes);
 
 router.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date() });

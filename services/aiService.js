@@ -47,7 +47,7 @@ class AIService {
       callbacks.onStart();
 
       const response = await this.openaiClient.post('/chat/completions', {
-        model: 'gpt-4',
+        model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: message }
@@ -58,11 +58,17 @@ class AIService {
         responseType: 'stream'
       });
 
-      let fullResponse = '';
+      let allResponse = '';
+      let currentChunk='';
       let isCodeBlock = false;
       let buffer = '';
+      const CHUNK_SIZE = 500;
 
       return new Promise((resolve, reject) => {
+        const streamTimeout = setTimeout(() => {
+          reject(new Error('Stream timeout'));
+        }, 30000);
+
         response.data.on('data', async chunk => {
           try {
             // 청크 데이터를 문자열로 변환하고 버퍼에 추가
@@ -78,10 +84,14 @@ class AIService {
 
               if (line === '') continue;
               if (line === 'data: [DONE]') {
+                if(currentChunk.length>0){
+                  await this.sendChunk(currentChunk, isCodeBlock, callbacks);
+                }
                 callbacks.onComplete({
-                  content: fullResponse.trim()
+                  content: allResponse.trim()
                 });
-                resolve(fullResponse.trim());
+                clearTimeout(streamTimeout);
+                resolve(allResponse.trim());
                 return;
               }
 
@@ -96,14 +106,14 @@ class AIService {
                       isCodeBlock = !isCodeBlock;
                     }
 
-                    // 현재 청크만 전송
-                    await callbacks.onChunk({
-                      currentChunk: content,
-                      isCodeBlock
-                    });
+                    allResponse += content;
+                    currentChunk = content;
 
-                    // 전체 응답은 서버에서만 관리
-                    fullResponse += content;
+                    if (currentChunk.length >= CHUNK_SIZE || content.includes('\n')) {
+                      await this.sendChunk(currentChunk, isCodeBlock, callbacks);
+                      currentChunk = '';
+                    }
+
                   }
                 } catch (err) {
                   console.error('JSON parsing error:', err);
@@ -112,6 +122,7 @@ class AIService {
             }
           } catch (error) {
             console.error('Stream processing error:', error);
+            clearTimeout(streamTimeout);
             callbacks.onError(error);
             reject(error);
           }
@@ -119,6 +130,7 @@ class AIService {
 
         response.data.on('error', error => {
           console.error('Stream error:', error);
+          clearTimeout(streamTimeout);
           callbacks.onError(error);
           reject(error);
         });
@@ -128,6 +140,15 @@ class AIService {
       console.error('AI response generation error:', error);
       callbacks.onError(error);
       throw new Error('AI 응답 생성 중 오류가 발생했습니다.');
+    }
+  }
+
+  async sendChunk(chunk, isCodeBlock, callbacks) {
+    if(chunk.length>0){
+      await callbacks.onChunk({
+        currentChunk: chunk,
+        isCodeBlock
+      });
     }
   }
 }
