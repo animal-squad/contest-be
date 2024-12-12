@@ -7,6 +7,7 @@ class SessionService {
   static SESSION_ID_PREFIX = 'sessionId:';
   static USER_SESSIONS_PREFIX = 'user_sessions:';
   static ACTIVE_SESSION_PREFIX = 'active_session:';
+  static SERVER_INFO_PREFIX = 'serverIP:';
 
   // 안전한 JSON 직렬화
   static safeStringify(data) {
@@ -354,6 +355,46 @@ class SessionService {
 
   static generateSessionId() {
     return crypto.randomBytes(32).toString('hex');
+  }
+
+  static SERVER_USER_PREFIX = 'server_user:';
+
+  // 서버 정보 저장
+  static async saveServerInfo(userId, serverInfo) {
+    try {
+      const serverInfoKey = `${this.SERVER_INFO_PREFIX}${userId}`;
+      const data = {
+        serverIP: process.env.SERVER_IP || 'localhost'
+      };
+
+      return await this.setJson(serverInfoKey, data, this.SESSION_TTL);
+    } catch (error) {
+      console.error('Save server info error:', error);
+      return false;
+    }
+  }
+
+  // 단일 사용자의 서버 정보 조회
+  static async getServerInfo(userId) {
+    try {
+      const key = `${this.SERVER_INFO_PREFIX}${userId}`;
+      return await this.getJson(key);
+    } catch (error) {
+      console.error('Get server info error:', error);
+      return null;
+    }
+  }
+
+  // 서버 정보 삭제
+  static async removeServerInfo(userId) {
+    try {
+      const key = `${this.SERVER_INFO_PREFIX}${userId}`;
+      await redisClient.del(key);
+      return true;
+    } catch (error) {
+      console.error('Remove server info error:', error);
+      return false;
+    }
   }
 }
 

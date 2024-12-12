@@ -7,6 +7,8 @@ const socketIO = require('socket.io');
 const path = require('path');
 const { router: roomsRouter, initializeSocket } = require('./routes/api/rooms');
 const routes = require('./routes');
+const KafkaService = require('./services/kafkaService');
+const kafkaService = new KafkaService();
 
 const app = express();
 const server = http.createServer(app);
@@ -71,6 +73,7 @@ app.use('/api', routes);
 // Socket.IO 설정
 const io = socketIO(server, { cors: corsOptions });
 require('./sockets/chat')(io);
+app.set('io', io);
 
 // Socket.IO 객체 전달
 initializeSocket(io);
@@ -97,8 +100,12 @@ app.use((err, req, res, next) => {
 
 // 서버 시작
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => {
+  .then(async () => {
     console.log('MongoDB Connected');
+
+    await kafkaService.init();
+    console.log('Kafka Connected');
+
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`Server running on port ${PORT}`);
       console.log('Environment:', process.env.NODE_ENV);
@@ -109,5 +116,19 @@ mongoose.connect(process.env.MONGO_URI)
     console.error('Server startup error:', err);
     process.exit(1);
   });
+
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received');
+  await kafkaService.disconnect();
+  server.close(() => {
+    mongoose.connection.close(false, () => {
+      process.exit(0);
+    });
+  });
+});
+
+process.on('uncaughtException', err => {
+  console.log(err)
+})
 
 module.exports = { app, server };

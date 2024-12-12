@@ -50,8 +50,31 @@ class RedisClient {
     } catch (error) {
       console.error('Redis connection error:', error);
       this.isConnected = false;
-      this.retryConnection();
+      await this.retryConnection();
       throw error;
+    }
+  }
+
+  async retryConnection() {
+    if (this.connectionAttempts >= this.maxRetries) {
+      console.error('Maximum retry attempts reached');
+      return;
+    }
+
+    this.connectionAttempts++;
+    console.log(`Retrying connection attempt ${this.connectionAttempts}/${this.maxRetries}`);
+
+    try {
+      setTimeout(async () => {
+        try {
+          await this.connect();
+        } catch (error) {
+          console.error('Retry connection error:', error);
+          await this.retryConnection();
+        }
+      }, this.retryDelay);
+    } catch (error) {
+      console.error('Retry scheduling error:', error);
     }
   }
 
@@ -155,6 +178,7 @@ class RedisClient {
       }
     }
   }
+
 }
 
 const redisClient = new RedisClient();
