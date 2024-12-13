@@ -25,6 +25,7 @@ jobs:
           echo "OPENAI_API_KEY=${{ secrets.CONTEST_OPENAI_API_KEY }}" >> .env
           echo "ENCRYPTION_KEY=${{ secrets.CONTEST_ENCRYPTION_KEY }}" >> .env
           echo "PASSWORD_SALT=${{ secrets.CONTEST_PASSWORD_SALT }}" >> .env
+          echo "KAFKA_BROKERS=10.0.12.131:9092" >> .env
 
       # 3. Docker 로그인
       - name: Log in to DockerHub
