@@ -5,7 +5,7 @@ class KafkaService {
     constructor() {
         this.kafka = new Kafka({
             clientId: 'chat-service',
-            brokers: process.env.KAFKA_BROKERS?.split(',')
+            brokers: process.env.KAFKA_BROKERS
         });
 
         this.producer = this.kafka.producer({
