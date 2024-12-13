@@ -1,13 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const messageController = require('../controllers/messageController');
-const auth = require('../middleware/auth');
-
-// 채팅방의 메시지 목록 조회
-router.get('/rooms/:roomId/messages', auth, messageController.loadMessages);
 
 router.post('/send', async (req, res) => {
     try {
+        console.log('Received message delivery request:', req.body);
         const { messageData } = req.body;
 
         if(!messageData || !messageData.recipients || !messageData.content ){
@@ -18,6 +14,7 @@ router.post('/send', async (req, res) => {
         }
 
         const io = req.app.get('io');
+        console.log('Got Socket.IO instance:', !!io);
         const deliveryResults = await deliverMessageToRecipients(io, messageData);
 
         res.status(200).json({
@@ -37,13 +34,14 @@ async function deliverMessageToRecipients(io, messageData) {
     const deliveryResults = [];
     const connectedSockets = await io.fetchSockets();
 
+
     for (const recipientId of messageData.recipients) {
         const recipientSocket = connectedSockets.find(socket =>
             socket.user && socket.user.id === recipientId
         );
 
         if (recipientSocket) {
-            recipientSocket.emit('message', {
+            recipientSocket.emit('chatMessage', {
                 content: messageData.content,
                 sender: messageData.sender,
                 type: messageData.type,

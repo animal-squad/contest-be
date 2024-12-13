@@ -7,6 +7,7 @@ const userRoutes = require('./api/users');
 const { router: roomsRouter } = require('./api/rooms');
 const fileRoutes = require('./api/files');
 const aiRoutes = require('./api/ai');
+const messageRoutes = require('./api/message');
 
 // API documentation route
 router.get("/", (req, res) => {
@@ -39,6 +40,7 @@ router.use('/users', userRoutes);
 router.use('/rooms', roomsRouter);  // roomsRouter로 변경
 router.use('/files', fileRoutes);
 router.use('/ai', aiRoutes);
+router.use('/messages', messageRoutes);
 
 router.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", timestamp: new Date() });

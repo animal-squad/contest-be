@@ -1,5 +1,19 @@
 const redisClient = require('../utils/redisClient');
 const crypto = require('crypto');
+const os = require('os');
+
+function getServerIP() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const interface of interfaces[name]) {
+      // IPv4이면서 내부 네트워크가 아닌 주소 찾기
+      if (interface.family === 'IPv4' && !interface.internal) {
+        return interface.address;
+      }
+    }
+  }
+  return 'localhost';
+}
 
 class SessionService {
   static SESSION_TTL = 24 * 60 * 60; // 24 hours
@@ -363,8 +377,9 @@ class SessionService {
   static async saveServerInfo(userId, serverInfo) {
     try {
       const serverInfoKey = `${this.SERVER_INFO_PREFIX}${userId}`;
+      const IP = getServerIP();
       const data = {
-        serverIP: process.env.SERVER_IP || 'localhost'
+        serverIP: IP
       };
 
       return await this.setJson(serverInfoKey, data, this.SESSION_TTL);

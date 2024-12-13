@@ -71,8 +71,8 @@ app.get('/health', (req, res) => {
 app.use('/api', routes);
 
 // Socket.IO 설정
-const io = socketIO(server, { cors: corsOptions });
-require('./sockets/chat')(io);
+const io = socketIO(server, { cors: corsOptions, path: "/api/socket" });
+require("./sockets/chat")(io);
 app.set('io', io);
 
 // Socket.IO 객체 전달
@@ -102,7 +102,6 @@ app.use((err, req, res, next) => {
 mongoose.connect(process.env.MONGO_URI)
   .then(async () => {
     console.log('MongoDB Connected');
-
     await kafkaService.init();
     console.log('Kafka Connected');
 
