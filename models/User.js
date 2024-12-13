@@ -169,7 +169,7 @@ UserSchema.methods.decryptEmail = function() {
 };
 
 // 인덱스 생성
-UserSchema.index({ email: 1 });
+UserSchema.index({ email: 1 }, { unique: true });
 UserSchema.index({ encryptedEmail: 1 }, { unique: true, sparse: true });
 UserSchema.index({ createdAt: 1 });
 UserSchema.index({ lastActive: 1 });

@@ -7,6 +7,8 @@ const { jwtSecret } = require('../config/keys');
 const redisClient = require('../utils/redisClient');
 const SessionService = require('../services/sessionService');
 const aiService = require('../services/aiService');
+const kafkaService = require('../services/kafkaService');
+const kafka = new kafkaService();
 
 module.exports = function(io) {
   const connectedUsers = new Map();
@@ -20,6 +22,8 @@ module.exports = function(io) {
   const MESSAGE_LOAD_TIMEOUT = 10000; // 메시지 로드 타임아웃 (10초)
   const RETRY_DELAY = 2000; // 재시도 간격 (2초)
   const DUPLICATE_LOGIN_TIMEOUT = 10000; // 중복 로그인 타임아웃 (10초)
+
+  kafka.init().catch(error => {throw new Error(error.name)});
 
   // 로깅 유틸리티 함수
   const logDebug = (action, data) => {
@@ -244,44 +248,73 @@ module.exports = function(io) {
     }
   });
   
-  io.on('connection', (socket) => {
+  io.on('connection', async (socket) => {
     logDebug('socket connected', {
       socketId: socket.id,
       userId: socket.user?.id,
       userName: socket.user?.name
     });
 
-    if (socket.user) {
-      // 이전 연결이 있는지 확인
-      const previousSocketId = connectedUsers.get(socket.user.id);
-      if (previousSocketId && previousSocketId !== socket.id) {
-        const previousSocket = io.sockets.sockets.get(previousSocketId);
-        if (previousSocket) {
-          // 이전 연결에 중복 로그인 알림
-          previousSocket.emit('duplicate_login', {
-            type: 'new_login_attempt',
-            deviceInfo: socket.handshake.headers['user-agent'],
-            ipAddress: socket.handshake.address,
-            timestamp: Date.now()
-          });
+    const serverConnection = await SessionService.saveServerInfo(socket.user.id);
+    if (!serverConnection) {
+      throw new Error('Failed to save server connection');
+    }
 
-          // 이전 연결 종료 처리
-          setTimeout(() => {
-            previousSocket.emit('session_ended', {
-              reason: 'duplicate_login',
-              message: '다른 기기에서 로그인하여 현재 세션이 종료되었습니다.'
+    if (socket.user) {
+      try {
+        // 서버 연결 정보 저장
+        await SessionService.saveServerInfo(socket.user.id, {
+          serverId: process.env.SERVER_ID,
+          socketId: socket.id
+        });
+
+        // 이전 연결 확인
+        const previousSocketId = connectedUsers.get(socket.user.id);
+        if (previousSocketId && previousSocketId !== socket.id) {
+          const previousSocket = io.sockets.sockets.get(previousSocketId);
+          if (previousSocket) {
+            // 이전 연결에 중복 로그인 알림
+            previousSocket.emit('duplicate_login', {
+              type: 'new_login_attempt',
+              deviceInfo: socket.handshake.headers['user-agent'],
+              ipAddress: socket.handshake.address,
+              timestamp: Date.now()
             });
-            previousSocket.disconnect(true);
-          }, DUPLICATE_LOGIN_TIMEOUT);
+
+            // 이전 연결 종료 처리
+            setTimeout(async () => {
+              // 이전 소켓의 서버 연결 정보 삭제
+              await SessionService.removeServerInfo(socket.user.id);
+
+              previousSocket.emit('session_ended', {
+                reason: 'duplicate_login',
+                message: '다른 기기에서 로그인하여 현재 세션이 종료되었습니다.'
+              });
+              previousSocket.disconnect(true);
+            }, DUPLICATE_LOGIN_TIMEOUT);
+          }
         }
+
+        // 새로운 연결 정보 저장
+        connectedUsers.set(socket.user.id, socket.id);
+
+        // 연결 해제 시 서버 정보 삭제
+        socket.on('disconnect', async () => {
+          try {
+            await SessionService.removeServerInfo(socket.user.id);
+          } catch (error) {
+            console.error('Disconnect cleanup error:', error);
+          }
+        });
+
+      } catch (error) {
+        console.error('Socket connection error:', error);
+        socket.disconnect(true);
       }
-      
-      // 새로운 연결 정보 저장
-      connectedUsers.set(socket.user.id, socket.id);
     }
 
     // 이전 메시지 로딩 처리 개선
-    socket.on('fetchPreviousMessages', async ({ roomId, before }) => {
+    socket.on('fetchPreviousMessages', async ({roomId, before}) => {
       const queueKey = `${roomId}:${socket.user.id}`;
 
       try {
@@ -311,7 +344,7 @@ module.exports = function(io) {
         socket.emit('messageLoadStart');
 
         const result = await loadMessagesWithRetry(socket, roomId, before);
-        
+
         logDebug('previous messages loaded', {
           roomId,
           messageCount: result.messages.length,
@@ -333,7 +366,7 @@ module.exports = function(io) {
         }, LOAD_DELAY);
       }
     });
-    
+
     // 채팅방 입장 처리 개선
     socket.on('joinRoom', async (roomId) => {
       try {
@@ -348,19 +381,19 @@ module.exports = function(io) {
             userId: socket.user.id,
             roomId
           });
-          socket.emit('joinRoomSuccess', { roomId });
+          socket.emit('joinRoomSuccess', {roomId});
           return;
         }
 
         // 기존 방에서 나가기
         if (currentRoom) {
-          logDebug('leaving current room', { 
-            userId: socket.user.id, 
-            roomId: currentRoom 
+          logDebug('leaving current room', {
+            userId: socket.user.id,
+            roomId: currentRoom
           });
           socket.leave(currentRoom);
           userRooms.delete(socket.user.id);
-          
+
           socket.to(currentRoom).emit('userLeft', {
             userId: socket.user.id,
             name: socket.user.name
@@ -369,12 +402,12 @@ module.exports = function(io) {
 
         // 채팅방 참가 with profileImage
         const room = await Room.findByIdAndUpdate(
-          roomId,
-          { $addToSet: { participants: socket.user.id } },
-          { 
-            new: true,
-            runValidators: true 
-          }
+            roomId,
+            {$addToSet: {participants: socket.user.id}},
+            {
+              new: true,
+              runValidators: true
+            }
         ).populate('participants', 'name email profileImage');
 
         if (!room) {
@@ -391,24 +424,24 @@ module.exports = function(io) {
           type: 'system',
           timestamp: new Date()
         });
-        
+
         await joinMessage.save();
 
         // 초기 메시지 로드
         const messageLoadResult = await loadMessages(socket, roomId);
-        const { messages, hasMore, oldestTimestamp } = messageLoadResult;
+        const {messages, hasMore, oldestTimestamp} = messageLoadResult;
 
         // 활성 스트리밍 메시지 조회
         const activeStreams = Array.from(streamingSessions.values())
-          .filter(session => session.room === roomId)
-          .map(session => ({
-            _id: session.messageId,
-            type: 'ai',
-            aiType: session.aiType,
-            content: session.content,
-            timestamp: session.timestamp,
-            isStreaming: true
-          }));
+            .filter(session => session.room === roomId)
+            .map(session => ({
+              _id: session.messageId,
+              type: 'ai',
+              aiType: session.aiType,
+              content: session.content,
+              timestamp: session.timestamp,
+              isStreaming: true
+            }));
 
         // 이벤트 발송
         socket.emit('joinRoomSuccess', {
@@ -437,57 +470,52 @@ module.exports = function(io) {
         });
       }
     });
-    
+
     // 메시지 전송 처리
     socket.on('chatMessage', async (messageData) => {
       try {
+        console.log('Message Data:', messageData);
+
         if (!socket.user) {
           throw new Error('Unauthorized');
         }
 
-        if (!messageData) {
-          throw new Error('메시지 데이터가 없습니다.');
-        }
+        const {room, type, content, fileData} = messageData;
 
-        const { room, type, content, fileData } = messageData;
-
-        if (!room) {
-          throw new Error('채팅방 정보가 없습니다.');
-        }
+        console.log('Looking for room:', room);
 
         // 채팅방 권한 확인
         const chatRoom = await Room.findOne({
           _id: room,
           participants: socket.user.id
-        });
+        }).populate('participants');
+
+        console.log('Found chatRoom:', chatRoom);
 
         if (!chatRoom) {
           throw new Error('채팅방 접근 권한이 없습니다.');
         }
 
-        // 세션 유효성 재확인
+        console.log('Room participants:', chatRoom.participants);
+
+        const recipients = chatRoom.participants
+            .map(p => p._id.toString());  // _id만 문자열로 변환
+
+        console.log('Participants IDs:', chatRoom.participants.map(p => p._id.toString()));
+        console.log('Current user ID:', socket.user.id);
+
+        // 세션 유효성 체크
         const sessionValidation = await SessionService.validateSession(
-          socket.user.id, 
-          socket.user.sessionId
+            socket.user.id,
+            socket.user.sessionId
         );
-        
+
         if (!sessionValidation.isValid) {
-          throw new Error('세션이 만료되었습니다. 다시 로그인해주세요.');
+          throw new Error('세션이 만료되었습니다.');
         }
 
-        // AI 멘션 확인
-        const aiMentions = extractAIMentions(content);
+        // 메시지 생성
         let message;
-
-        logDebug('message received', {
-          type,
-          room,
-          userId: socket.user.id,
-          hasFileData: !!fileData,
-          hasAIMentions: aiMentions.length
-        });
-
-        // 메시지 타입별 처리
         switch (type) {
           case 'file':
             if (!fileData || !fileData._id) {
@@ -521,9 +549,7 @@ module.exports = function(io) {
 
           case 'text':
             const messageContent = content?.trim() || messageData.msg?.trim();
-            if (!messageContent) {
-              return;
-            }
+            if (!messageContent) return;
 
             message = new Message({
               room,
@@ -541,13 +567,48 @@ module.exports = function(io) {
 
         await message.save();
         await message.populate([
-          { path: 'sender', select: 'name email profileImage' },
-          { path: 'file', select: 'filename originalname mimetype size' }
+          {path: 'sender', select: 'name email profileImage'},
+          {path: 'file', select: 'filename originalname mimetype size'}
         ]);
 
-        io.to(room).emit('message', message);
+        // Redis에서 수신자들의 서버 정보 조회
+        const recipientServers = await SessionService.getServerInfo(recipients);
 
-        // AI 멘션이 있는 경우 AI 응답 생성
+        socket.emit('message', {
+          content: message.content,
+          sender: { id: socket.user.id, name: socket.user.name },
+          type: message.type,
+          timestamp: message.timestamp,
+          room: message.room,
+        });
+
+        // Kafka로 메시지 발행
+        await kafka.publishMessage({
+          messageId: message._id.toString(),
+          content: message.content,
+          type: message.type,
+          sender: {
+            id: socket.user.id,
+            name: socket.user.name
+          },
+          room: room,
+          recipients: recipients,  // 참여자 ID 목록 포함
+          timestamp: message.timestamp
+        });
+
+        console.log('Publishing message to Kafka:', {
+          content,
+          type,
+          sender: {
+            id: socket.user.id,
+            name: socket.user.name
+          },
+          room,
+          recipients
+        });
+
+        // AI 멘션 처리
+        const aiMentions = extractAIMentions(content);
         if (aiMentions.length > 0) {
           for (const ai of aiMentions) {
             const query = content.replace(new RegExp(`@${ai}\\b`, 'g'), '').trim();
@@ -557,17 +618,11 @@ module.exports = function(io) {
 
         await SessionService.updateLastActivity(socket.user.id);
 
-        logDebug('message processed', {
-          messageId: message._id,
-          type: message.type,
-          room
-        });
-
       } catch (error) {
         console.error('Message handling error:', error);
         socket.emit('error', {
           code: error.code || 'MESSAGE_ERROR',
-          message: error.message || '메시지 전송 중 오류가 발생했습니다.'
+          message: error.message
         });
       }
     });
@@ -610,12 +665,12 @@ module.exports = function(io) {
 
         // 참가자 목록 업데이트 - profileImage 포함
         const updatedRoom = await Room.findByIdAndUpdate(
-          roomId,
-          { $pull: { participants: socket.user.id } },
-          { 
-            new: true,
-            runValidators: true
-          }
+            roomId,
+            {$pull: {participants: socket.user.id}},
+            {
+              new: true,
+              runValidators: true
+            }
         ).populate('participants', 'name email profileImage');
 
         if (!updatedRoom) {
@@ -648,7 +703,7 @@ module.exports = function(io) {
         });
       }
     });
-    
+
     // 연결 해제 처리
     socket.on('disconnect', async (reason) => {
       if (!socket.user) return;
@@ -664,12 +719,12 @@ module.exports = function(io) {
 
         // 메시지 큐 정리
         const userQueues = Array.from(messageQueues.keys())
-          .filter(key => key.endsWith(`:${socket.user.id}`));
+            .filter(key => key.endsWith(`:${socket.user.id}`));
         userQueues.forEach(key => {
           messageQueues.delete(key);
           messageLoadRetries.delete(key);
         });
-        
+
         // 스트리밍 세션 정리
         for (const [messageId, session] of streamingSessions.entries()) {
           if (session.userId === socket.user.id) {
@@ -689,12 +744,12 @@ module.exports = function(io) {
             });
 
             const updatedRoom = await Room.findByIdAndUpdate(
-              roomId,
-              { $pull: { participants: socket.user.id } },
-              { 
-                new: true,
-                runValidators: true 
-              }
+                roomId,
+                {$pull: {participants: socket.user.id}},
+                {
+                  new: true,
+                  runValidators: true
+                }
             ).populate('participants', 'name email profileImage');
 
             if (updatedRoom) {
@@ -717,7 +772,7 @@ module.exports = function(io) {
     });
 
     // 세션 종료 또는 로그아웃 처리
-    socket.on('force_login', async ({ token }) => {
+    socket.on('force_login', async ({token}) => {
       try {
         if (!socket.user) return;
 
@@ -745,7 +800,7 @@ module.exports = function(io) {
     });
 
     // 메시지 읽음 상태 처리
-    socket.on('markMessagesAsRead', async ({ roomId, messageIds }) => {
+    socket.on('markMessagesAsRead', async ({roomId, messageIds}) => {
       try {
         if (!socket.user) {
           throw new Error('Unauthorized');
@@ -757,19 +812,19 @@ module.exports = function(io) {
 
         // 읽음 상태 업데이트
         await Message.updateMany(
-          {
-            _id: { $in: messageIds },
-            room: roomId,
-            'readers.userId': { $ne: socket.user.id }
-          },
-          {
-            $push: {
-              readers: {
-                userId: socket.user.id,
-                readAt: new Date()
+            {
+              _id: {$in: messageIds},
+              room: roomId,
+              'readers.userId': {$ne: socket.user.id}
+            },
+            {
+              $push: {
+                readers: {
+                  userId: socket.user.id,
+                  readAt: new Date()
+                }
               }
             }
-          }
         );
 
         socket.to(roomId).emit('messagesRead', {
@@ -786,7 +841,7 @@ module.exports = function(io) {
     });
 
     // 리액션 처리
-    socket.on('messageReaction', async ({ messageId, reaction, type }) => {
+    socket.on('messageReaction', async ({messageId, reaction, type}) => {
       try {
         if (!socket.user) {
           throw new Error('Unauthorized');
