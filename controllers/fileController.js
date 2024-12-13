@@ -401,7 +401,7 @@ exports.profileUploadComplete = async (req, res) => {
     }
 
     // 파일 경로 생성
-    const filePath = `https://${process.env.BUCKET_KEY}.s3.ap-northeast-2.amazonaws.com/${fileKey}`;
+    const filePath = `${process.env.CDN_PATH}/${fileKey}`;
 
     // 프로필 이미지 업데이트
     existingUser.profileImage = filePath;
@@ -426,7 +426,6 @@ exports.profileUploadComplete = async (req, res) => {
     });
   }
 };
-
 
 exports.deleteFile = async (req, res) => {
   try {
