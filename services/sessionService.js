@@ -215,6 +215,23 @@ class SessionService {
     }
   }
 
+  static async getSocketId(userId, sessionId) {
+    try {
+      const serverInfoKey = `${this.SERVER_INFO_PREFIX}${userId}`;
+      const serverInfo = await redisClient.get(serverInfoKey);
+
+      if (!serverInfo) {
+        return null;
+      }
+
+      return serverInfo.socketId || null;
+
+    } catch (error) {
+      console.error('Get socket ID error:', error);
+      return null;
+    }
+  }
+
   static async removeSession(userId, sessionId = null) {
     try {
       const userSessionsKey = this.getUserSessionsKey(userId);
