@@ -10,7 +10,9 @@ const routes = require('./routes');
 
 const app = express();
 const server = http.createServer(app);
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
+
+const uploadRoutes = require("./routes/api/files");
 
 // trust proxy 설정 추가
 app.set('trust proxy', 1);
@@ -94,6 +96,9 @@ app.use((err, req, res, next) => {
     ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
   });
 });
+
+// 업로드 핸들러
+app.use("/api/upload", uploadRoutes);
 
 // 서버 시작
 mongoose.connect(process.env.MONGO_URI)
